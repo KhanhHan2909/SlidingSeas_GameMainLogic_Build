@@ -8,7 +8,7 @@ public class BackgroundRenderer {
     private final Texture background;
 
     public BackgroundRenderer() {
-        background = new Texture(Gdx.files.internal("images/background.png"));
+        background = new Texture(Gdx.files.internal("images/background.jpg"));
     }
 
     public void render(SpriteBatch batch) {

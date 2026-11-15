@@ -198,6 +198,7 @@ public class MainMenuScreen extends BaseScreen {
 
     private void initializeBackButton() {
         backButton = new ActionButton("Back", TextureUtils.backIcon, Color.valueOf("#A8F792"), this::createMainMenu);
+        backButton.scaleBy(2f);
 
         Table topBar = new Table();
         topBar.setFillParent(true);

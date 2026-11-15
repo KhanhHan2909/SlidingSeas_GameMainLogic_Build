@@ -1,11 +1,11 @@
 
 package screens;
 
+import board.Board;
+import board.Tile;
 import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.ScreenAdapter;
 import com.badlogic.gdx.graphics.*;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
-import com.badlogic.gdx.scenes.scene2d.ui.Image;
 import com.badlogic.gdx.utils.viewport.FitViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
@@ -24,10 +24,15 @@ import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.utils.Align;
 
 import board.BoardManager;
-import board.Board;
-import board.Tile;
-import data.LevelData;
+import gameplay.GameRules;
+import gameplay.LevelData;
 import gameplay.MergeSystem;
+import gameplay.animation.CascadePlan;
+import gameplay.animation.CascadePlanner;
+import gameplay.animation.MergeAnimation;
+import gameplay.animation.MergeConvergeAnimation;
+import gameplay.animation.MergeGroupSnapshot;
+
 import input.MoveHandler;
 import managers.AnimationManager;
 import managers.AssetManager;
@@ -35,6 +40,10 @@ import managers.InputManager;
 import rendering.BoardRenderer;
 import managers.ScreenManager;
 import ui.ActionButton;
+import ui.LevelObjectiveRenderer;
+
+import java.util.Arrays;
+import java.util.List;
 
 import static ui.TextureUtils.createRoundedTexture;
 
@@ -50,6 +59,7 @@ public class GameScreen extends BaseScreen {
 
     private AssetManager assetManager;
     private ShapeRenderer shapeRenderer;
+    private GameRules gameRules;
     private BoardManager boardManager;
     private AnimationManager animationManager;
     private InputManager inputManager;
@@ -73,6 +83,28 @@ public class GameScreen extends BaseScreen {
 
     private final String mode;
     private final LevelData level;
+
+    private int cascadePlanCount = 0;
+
+    private MergeAnimation mergeAnimation;
+    private static final float FALL_SPEED = 600f;
+
+    private MergeConvergeAnimation convergeAnimation;
+    private boolean convergenceFromMove = false;
+
+    private CascadePlanner cascadePlanner;
+    private float tileSize;
+    private float boardX;
+    private float boardY;
+
+    private enum CascadeState {
+        IDLE,
+        CONVERGING,
+        REFILLING
+    }
+
+    private CascadeState cascadeState = CascadeState.IDLE;
+    private LevelObjectiveRenderer objectiveRenderer;
 
     // Asset path
     private static final String QUIT_ICON_PATH = "images/quitgame.png";
@@ -99,17 +131,25 @@ public class GameScreen extends BaseScreen {
         shapeRenderer = new ShapeRenderer();
 
         // Initialize board using selected level dimensions
-        boardManager = new BoardManager(mode, level.getRows(), level.getCols());
+        boardManager = new BoardManager(mode, level);
 
         animationManager = new AnimationManager(boardManager.getBoard().getRows(), boardManager.getBoard().getCols());
 
-        boardRenderer = new BoardRenderer(batch, assetManager, animationManager, boardManager.getTileSize(),
-            boardManager.getBoardX(), boardManager.getBoardY());
+        tileSize = boardManager.getTileSize();
+        boardX = boardManager.getBoardX();
+        boardY = boardManager.getBoardY();
+        boardRenderer = new BoardRenderer(batch, assetManager, animationManager, tileSize,
+            boardX, boardY);
+        objectiveRenderer = new LevelObjectiveRenderer(boardManager);
 
         moveHandler = new MoveHandler(animationManager);
 
         inputManager = new InputManager(viewport, moveHandler, boardManager);
         mergeSystem = new MergeSystem(inputManager);
+        cascadePlanner = new CascadePlanner();
+
+        gameRules = new GameRules(level);
+        objectiveRenderer.setObjective(gameRules.setObjective());
 
         // Initialize UI
         initializeQuitUI();
@@ -119,6 +159,10 @@ public class GameScreen extends BaseScreen {
         multiplexer.addProcessor(uiStage);
         multiplexer.addProcessor(inputManager);
         Gdx.input.setInputProcessor(multiplexer);
+    }
+
+    public void setLevelObjective(String objective) {
+        objectiveRenderer.setObjective(objective);
     }
 
     private void initializeQuitUI() {
@@ -144,7 +188,10 @@ public class GameScreen extends BaseScreen {
         dialogBackgroundTexture = createRoundedTexture(new Color(0.08f, 0.32f, 0.18f, 1f), 512, 300, 16);
 
         quitButton = new ActionButton("Quit", quitIcon, new Color(1f, 0.35f, 0.35f, 1f),
-            this::showQuitConfirmation);
+            this::showQuitConfirmation
+        );
+
+        quitButton.scaleBy(2f);
 
         Table topBar = new Table();
         topBar.setFillParent(true);
@@ -243,6 +290,156 @@ public class GameScreen extends BaseScreen {
         dialogOverlayTexture = overlayTexture;
     }
 
+    private void startConvergeAnimation(
+        boolean fromMove
+    ) {
+        List<MergeGroupSnapshot> groups =
+            mergeSystem.consumeLastMergeGroups();
+
+        if (groups.isEmpty()) {
+            throw new IllegalStateException(
+                "Merge detected but no MatchGroup snapshot available."
+            );
+        }
+
+        // Khóa input cho toàn bộ chuỗi merge.
+        moveHandler.setInputLocked(true);
+
+        convergenceFromMove = fromMove;
+
+        convergeAnimation = new MergeConvergeAnimation(
+            groups,
+            boardManager.getBoard().getRows(),
+            tileSize,
+            boardX,
+            boardY
+        );
+
+        cascadeState = CascadeState.CONVERGING;
+    }
+
+    private void startCascadeAnimation() {
+
+        // Khóa input trong suốt chuỗi cascade.
+        moveHandler.setInputLocked(true);
+
+        cascadePlanCount++;
+        boolean hasAvailableSurvivor = false;
+        Tile[][] tiles = boardManager.getBoard().getTiles();
+        if(Arrays.stream(tiles).anyMatch(rows -> Arrays.stream(rows).anyMatch(t ->
+            t.getSurvivors() > 0 && !t.hasShelter()))) hasAvailableSurvivor = true;
+        if(!hasAvailableSurvivor) cascadePlanCount = 0;
+        boolean shouldSpawnSurvivor = cascadePlanCount % 10 == 0;
+
+        CascadePlan plan = cascadePlanner.createPlan(
+            level, boardManager.getBoard(), shouldSpawnSurvivor
+        );
+
+//        if (plan.isEmpty()) {
+//            finishCascadeChain();
+//            return;
+//        }
+
+        mergeAnimation = new MergeAnimation(
+            boardManager.getBoard(),
+            plan,
+            tileSize,
+            boardX,
+            boardY,
+            FALL_SPEED
+        );
+
+        cascadeState = CascadeState.REFILLING;
+    }
+
+    private void onCascadeCompleted() {
+
+        mergeAnimation = null;
+
+        boolean hasNewMerge =
+            mergeSystem.mergeAutomatic(
+                mode,
+                boardManager.getBoard()
+            );
+
+        if (!hasNewMerge) {
+            finishCascadeChain();
+            return;
+        }
+
+        // MergeSystem đã:
+        // 1. Capture các MatchGroup.
+        // 2. Upgrade pivot.
+        // 3. Đánh dấu PENDING.
+
+        // Chạy hiệu ứng hội tụ cho các match mới.
+        startConvergeAnimation(false);
+    }
+
+    private void finishCascadeChain() {
+
+        mergeAnimation = null;
+        convergeAnimation = null;
+
+        convergenceFromMove = false;
+
+        cascadeState = CascadeState.IDLE;
+
+        moveHandler.setInputLocked(false);
+    }
+
+    private void updateCascadeChain(float delta) {
+
+        switch (cascadeState) {
+
+            case IDLE:
+                break;
+
+            case CONVERGING:
+
+                if (convergeAnimation == null) {
+                    throw new IllegalStateException(
+                        "CONVERGING without MergeConvergeAnimation"
+                    );
+                }
+
+                convergeAnimation.update(delta);
+
+                if (convergeAnimation.isFinished()) {
+
+                    convergeAnimation = null;
+
+                    if (convergenceFromMove) {
+                        moveHandler.completeMergeConvergence();
+                    }
+
+                    convergenceFromMove = false;
+
+                    // Hiệu ứng hội tụ đã hoàn tất.
+                    // Bắt đầu dồn tile và sinh tile mới.
+                    startCascadeAnimation();
+                }
+
+                break;
+
+            case REFILLING:
+
+                if (mergeAnimation == null) {
+                    throw new IllegalStateException(
+                        "REFILLING without MergeAnimation"
+                    );
+                }
+
+                mergeAnimation.update(delta);
+
+                if (mergeAnimation.isFinished()) {
+                    onCascadeCompleted();
+                }
+
+                break;
+        }
+    }
+
     private TextButton createDialogButton(String text, Texture background, Color textColor) {
         TextButton.TextButtonStyle style = new TextButton.TextButtonStyle();
 
@@ -267,19 +464,48 @@ public class GameScreen extends BaseScreen {
 
     @Override
     public void render(float delta) {
+
         Gdx.gl.glClearColor(0.1f, 0.2f, 0.3f, 1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
+
         renderBackground();
 
         camera.update();
         batch.setProjectionMatrix(camera.combined);
-        moveHandler.update(boardManager, mergeSystem, delta);
-        boardRenderer.render(boardManager.getBoard());
 
-        // Render UI on top of gameplay
+        // 1. Cập nhật swap và reverse
+        moveHandler.update(
+            boardManager,
+            mergeSystem,
+            delta
+        );
+
+        // 2. Xử lý match
+        if (moveHandler.consumeMergeReady()) {
+            startConvergeAnimation(true);
+        }
+
+        // 3. Cập nhật hội tụ hoặc cascade
+        updateCascadeChain(delta);
+
+        // 4. Render board và animation
+        // BoardRenderer tự gọi begin() và end()
+        boardRenderer.render(
+            boardManager.getBoard(),
+            mergeAnimation,
+            convergeAnimation
+        );
+
+        // 5. Render mục tiêu màn chơi
+        batch.begin();
+        objectiveRenderer.render(batch);
+        batch.end();
+
+        // 6. Render UI
         uiStage.act(delta);
         uiStage.draw();
     }
+
 
     @Override
     public void resize(int width, int height) {
@@ -329,6 +555,10 @@ public class GameScreen extends BaseScreen {
 
         if (assetManager != null) {
             assetManager.dispose();
+        }
+
+        if (objectiveRenderer != null) {
+            objectiveRenderer.dispose();
         }
     }
 

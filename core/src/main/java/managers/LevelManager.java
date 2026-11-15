@@ -1,6 +1,6 @@
 package managers;
 
-import data.LevelData;
+import gameplay.LevelData;
 
 import java.util.*;
 
@@ -10,8 +10,7 @@ public class LevelManager {
     private String currentGameMode;
     private LevelData currentLevel;
 
-    public LevelManager(
-        Map<String, List<LevelData>> levelConfigurations) {
+    public LevelManager(Map<String, List<LevelData>> levelConfigurations) {
         if (levelConfigurations == null) {
             throw new IllegalArgumentException(
                 "Level configurations cannot be null"
@@ -26,25 +25,9 @@ public class LevelManager {
 
             List<LevelData> copiedLevels = new ArrayList<>(levels);
 
-            boolean[] found = new boolean[3];
-
             for (LevelData level : copiedLevels) {
                 if (level == null) {
                     throw new IllegalArgumentException("Level data cannot be null");
-                }
-
-                int number = level.getLevelNumber();
-
-                if (found[number - 1]) {
-                    throw new IllegalArgumentException("Duplicate level number: " + number);
-                }
-
-                found[number - 1] = true;
-            }
-
-            for (boolean exists : found) {
-                if (!exists) {
-                    throw new IllegalArgumentException("Each GameMode must contain levels 1, 2, 3");
                 }
             }
 

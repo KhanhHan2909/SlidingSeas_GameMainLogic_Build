@@ -3,7 +3,12 @@ package managers;
 import com.badlogic.gdx.Game;
 import com.badlogic.gdx.Screen;
 
-import data.LevelData;
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoClients;
+import dev.morphia.Datastore;
+import dev.morphia.Morphia;
+import dev.morphia.query.filters.Filters;
+import gameplay.LevelData;
 import screens.AboutScreen;
 import screens.GameScreen;
 import screens.LevelSelectScreen;
@@ -17,9 +22,20 @@ import java.util.Map;
 public class ScreenManager {
     private final Game game;
     private final LevelManager levelManager;
+    public static Datastore datastore;
 
     public ScreenManager(Game game) {
         this.game = game;
+        MongoClient mongoClient = MongoClients.create("mongodb://localhost:27017");
+        datastore = Morphia.createDatastore(mongoClient, "slidingseas");
+        datastore.getMapper().mapPackage("gameplay");
+
+        LevelData emptyLevel = datastore.find(LevelData.class).filter(Filters.eq("mode", "")).first();
+        if(emptyLevel == null) {
+            LevelData sampleLevel = new LevelData();
+            datastore.save(sampleLevel);
+        }
+
         this.levelManager = new LevelManager(createLevelData());
     }
 
@@ -28,12 +44,10 @@ public class ScreenManager {
         Map<String, List<LevelData>> levels = new HashMap<>();
 
         for (String mode : MainMenuScreen.modeNames) {
-            List<LevelData> modeLevels = new ArrayList<>();
-
-            // Kích thước khởi tạo tạm thời, có thể thay đổi sau
-            modeLevels.add(new LevelData(1, 5, 5));
-            modeLevels.add(new LevelData(2, 7, 7));
-            modeLevels.add(new LevelData(3, 9, 9));
+            List<LevelData> modeLevels = datastore.find(LevelData.class)
+                .filter(Filters.eq("mode", mode))
+                .iterator()
+                .toList();
 
             levels.put(mode, modeLevels);
         }

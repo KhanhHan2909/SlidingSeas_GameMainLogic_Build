@@ -10,6 +10,10 @@ dependencies {
   api "games.rednblack.hyperlap2d:runtime-libgdx:$h2dVersion"
   api "net.onedaybeard.artemis:artemis-odb:$artemisOdbVersion"
 
+  implementation 'dev.morphia.morphia:morphia-core:2.3.5'
+  implementation 'org.mongodb:mongodb-driver-sync:4.8.2'
+  implementation 'org.slf4j:slf4j-simple:2.0.13'
+
   if(enableGraalNative == 'true') {
     implementation "io.github.berstanio:gdx-svmhelper-annotations:$graalHelperVersion"
   }

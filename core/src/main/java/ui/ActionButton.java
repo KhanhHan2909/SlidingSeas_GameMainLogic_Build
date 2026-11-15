@@ -19,6 +19,7 @@ public class ActionButton extends Table {
     private static final float BUTTON_HEIGHT = 65;
     private static final float ICON_SIZE = 38;
     private final Texture background;
+    private final Label buttonLabel;
 
     public ActionButton(String label, Texture icon, Color backgroundColor, Runnable action) {
 
@@ -32,7 +33,7 @@ public class ActionButton extends Table {
             add(iconImage).size(38, 38).padLeft(12).padRight(10);
         }
 
-        Label buttonLabel = new Label(label,
+        buttonLabel = new Label(label,
             new Label.LabelStyle(ActionButtonResources.getFont(), Color.BLACK));
 
         buttonLabel.setAlignment(Align.center);
@@ -47,6 +48,11 @@ public class ActionButton extends Table {
                 if (action != null) action.run();
             }
         });
+    }
+
+    public void scaleBy(float scale) {
+        buttonLabel.setFontScale(scale);
+        invalidateHierarchy();
     }
 
     public void dispose() {

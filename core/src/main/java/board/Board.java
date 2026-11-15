@@ -1,5 +1,10 @@
 package board;
 
+import gameplay.animation.CascadePhase;
+import gameplay.animation.ColumnDrop;
+import gameplay.animation.TileMovement;
+import gameplay.animation.TileSpawn;
+
 public class Board {
 
     private final int rows;
@@ -17,11 +22,12 @@ public class Board {
             for (int col = 0; col < cols; col++) {
 
                 tiles[row][col] =
-                    new Tile(row, col, 0);
-
+                    new Tile(row, col);
             }
         }
     }
+
+    public Tile[][] getTiles() { return tiles; }
 
     public int getRows() { return rows; }
 
@@ -33,6 +39,10 @@ public class Board {
         }
 
         return tiles[row][col];
+    }
+
+    public void setTile(Tile tile, int row, int col) {
+        tiles[row][col] = tile;
     }
 
     public void setTileType(int row, int col, int type) {
@@ -73,5 +83,64 @@ public class Board {
 
         tile1.setPosition(row2, col2);
         tile2.setPosition(row1, col1);
+    }
+
+    public void applyCascadePhase(CascadePhase phase) {
+
+        for (ColumnDrop drop : phase.columnDrops()) {
+
+            int col = drop.column();
+
+            Tile[] before = new Tile[rows];
+            Tile[] after = new Tile[rows];
+
+            // Chụp trạng thái đầu phase.
+            for (int r = 0; r < rows; r++) {
+                before[r] = tiles[r][col].copy();
+                after[r] = before[r].copy();
+            }
+
+            // Xóa thuộc tính ở những vị trí tile rời đi.
+            for (TileMovement move : drop.movements()) {
+                after[move.fromRow()].clearExtras();
+            }
+
+            // Chuyển thuộc tính đến vị trí mới,
+            // luôn đọc từ snapshot before.
+            for (TileMovement move : drop.movements()) {
+                after[move.toRow()].copyExtrasFrom(
+                    before[move.fromRow()]
+                );
+            }
+
+            // Gán thuộc tính của tile vừa sinh.
+            TileSpawn spawn = drop.spawn();
+
+            if (spawn != null) {
+                after[spawn.row()].copyExtrasFrom(
+                    spawn.tile()
+                );
+            }
+
+            // Cập nhật kết quả phase.
+            int[] types = drop.resultingTypes();
+
+            for (int r = 0; r < rows; r++) {
+
+                if (types[r] == 0) {
+                    continue; // EMPTY không thay đổi
+                }
+
+                after[r].setType(types[r]);
+
+                if (types[r] == 25) {
+                    after[r].clearExtras();
+                }
+
+                after[r].setPosition(r, col);
+
+                tiles[r][col] = after[r];
+            }
+        }
     }
 }

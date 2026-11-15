@@ -1,18 +1,23 @@
 package board;
 
+import gameplay.LevelData;
 import gameplay.MergeSystem;
 import input.SwipeDirection;
 import managers.InputManager;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class BoardManager {
     private Board board;
 
     private final String mode;
-    private final BoardGenerator generator;
 //    private final InputManager inputManager;
 
     private final int rows;
     private final int cols;
+    private final List<Tile> fixedPositions = new ArrayList<>();
+    private final int[] availableTypes;
 
     private final float tileSize;
 
@@ -26,17 +31,18 @@ public class BoardManager {
     private static final float WORLD_HEIGHT = 1080f;
 
     // Giới hạn khu vực dành cho bàn cờ
-    private static final float MAX_BOARD_WIDTH = 1000f;
-    private static final float MAX_BOARD_HEIGHT = 800f;
+    private static final float MAX_BOARD_WIDTH = 700f;
+    private static final float MAX_BOARD_HEIGHT = 700f;
 
     // Kích thước tối đa của một ô
     private static final float MAX_TILE_SIZE = 120f;
 
 
-    public BoardManager(String mode, int rows, int cols) {
+    public BoardManager(String mode, LevelData level) {
         this.mode = mode;
-        this.rows = rows;
-        this.cols = cols;
+        this.rows = level.getRows();
+        this.cols = level.getCols();
+        this.availableTypes = level.getAvailableTypes();
 //        this.inputManager = inputManager;
 
         // Tự động điều chỉnh kích thước ô
@@ -52,8 +58,7 @@ public class BoardManager {
         boardX = (WORLD_WIDTH - getBoardWidth()) / 2f;
         boardY = (WORLD_HEIGHT - getBoardHeight()) / 2f;
 
-        generator = new BoardGenerator();
-        board = generator.generate(rows, cols);
+        board = BoardGenerator.generate(rows, cols, level.getFixedPositions(), level.getAvailableTypes());
     }
 
     public Board getBoard() {

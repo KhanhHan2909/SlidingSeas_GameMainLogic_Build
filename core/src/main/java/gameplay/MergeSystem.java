@@ -3,161 +3,255 @@ package gameplay;
 import board.Board;
 import board.BoardGenerator;
 import board.Tile;
-import board.TileType;
+import gameplay.animation.MergeGroupSnapshot;
 import managers.InputManager;
+import screens.GameScreen;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class MergeSystem {
     private final InputManager inputManager;
     private final MatchDetector matchDetector;
+    private final List<MergeGroupSnapshot> lastMergeGroups = new ArrayList<>();
 
     public MergeSystem(InputManager inputManager) {
         this.inputManager = inputManager;
         this.matchDetector = new MatchDetector();
     }
+
+    public List<MergeGroupSnapshot> consumeLastMergeGroups() {
+
+        List<MergeGroupSnapshot> result =
+            List.copyOf(lastMergeGroups);
+
+        lastMergeGroups.clear();
+
+        return result;
+    }
     /**
-     * Hợp nhất tất cả nhóm đảo hợp lệ.
+     * Merge lần đầu sau thao tác swap của người chơi.
      *
-     * @return số lần hợp nhất đã thực hiện
+     * Ưu tiên tile vừa swap làm pivot nếu nó nằm
+     * trong nhóm match.
      */
     public boolean merge(String mode, Board board) {
-        boolean mergeAvailable = false;
-        boolean firstRound = true;
+        lastMergeGroups.clear();
+        return mergeRound(mode, board, true);
+    }
 
-        while (true) {
-            List<List<Tile>> matches = matchDetector.findMatches(board);
-            if (matches.isEmpty()) break;
+    /**
+     * Merge tự động sau khi cascade hoàn tất.
+     *
+     * Không sử dụng tile người chơi đã chọn để
+     * xác định pivot.
+     */
+    public boolean mergeAutomatic(String mode, Board board) {
+        lastMergeGroups.clear();
+        return mergeRound(mode, board, false);
+    }
 
-            if(firstRound) {
-                mergeAvailable = true;
+    /**
+     * Thực hiện đúng một lượt merge.
+     *
+     * Không refill và không lặp liên tục.
+     */
+    private boolean mergeRound(String mode, Board board, boolean usePlayerPivot) {
+        List<List<Tile>> matches =
+            matchDetector.findMatches(board);
 
-                Tile selectedTile = inputManager.getSelectedTile(),
-                    adjacentTile = inputManager.getAdjacentTile();
-
-                for(List<Tile> group : matches) {
-                    if(group.getFirst().getType() == selectedTile.getType()) mergeGroup(mode, group, selectedTile);
-                    else mergeGroup(mode, group, adjacentTile);
-                }
-
-                firstRound = false;
-            } else {
-                for(List<Tile> group : matches) mergeGroup(mode, group, null);
-            }
-
-            for(int r = 0; r < board.getRows(); r++) {
-                for(int c = 0; c < board.getCols(); c++) {
-                    if (board.getTile(r, c).getType() == 10) {
-                        for (int i = r; i > 0; i--) {
-                            board.getTile(i, c).setType(board.getTile(i - 1, c).getType());
-                        }
-                        int newType = BoardGenerator.random.nextInt(BoardGenerator.availableTypes.length);
-                        board.setTileType(0, c, BoardGenerator.availableTypes[newType]);
-                    }
-                }
-            }
+        if (matches.isEmpty()) {
+            return false;
         }
 
-        return mergeAvailable;
+        Tile selectedTile = null;
+        Tile adjacentTile = null;
+
+        if (usePlayerPivot) {
+            selectedTile = inputManager.getSelectedTile();
+            adjacentTile = inputManager.getAdjacentTile();
+        }
+
+        for (List<Tile> group : matches) {
+
+            Tile pivot = null;
+
+            if (usePlayerPivot) {
+
+                if (selectedTile != null
+                    && group.contains(selectedTile)) {
+
+                    pivot = selectedTile;
+
+                } else if (adjacentTile != null
+                    && group.contains(adjacentTile)) {
+
+                    pivot = adjacentTile;
+                }
+            }
+
+            mergeGroup(mode, group, pivot);
+        }
+
+//        GameScreen.mergeTurnCount++;
+        return true;
     }
+
 
     /**
      * Hợp nhất một nhóm đảo.
      */
-    private void mergeGroup(String mode, List<Tile> group, Tile pivotTile) {
-        if (group == null) return;
+    private void mergeGroup(
+        String mode,
+        List<Tile> group,
+        Tile pivotTile
+    ) {
+        if (group == null || group.isEmpty()) {
+            return;
+        }
 
-        int size = group.size(), i;
+        // 1. Trường hợp đặc biệt: ICEBERG GROUP.
+        if (group.getFirst().getType() == 9) {
 
-        if(pivotTile != null) {
-            if(pivotTile.getType() == 4) {
-                pivotTile.setType(mode.equals("Rescue Boat") || mode.equals("Precious Items") ? 9 : 5);
+            // Lưu toàn bộ vị trí iceberg.
+            // Không có pivot.
+            lastMergeGroups.add(
+                MergeGroupSnapshot.captureIceberg(group)
+            );
+
+            // Tất cả iceberg trở thành PENDING.
+            for (Tile tile : group) {
+                tile.setType(25);
             }
-            else if(pivotTile.getType() != 9) {
-                pivotTile.levelUp();
-            }
-            else pivotTile.setType(10);
 
-            for(Tile t : group) {
-                if(t.getRow() != pivotTile.getRow() || t.getCol() != pivotTile.getCol()) t.setType(10);
-                else t.setType(pivotTile.getType());
+            return;
+        }
+
+        // 2. MatchGroup bình thường.
+        Tile upgradedTile = pivotTile;
+
+        // Không có pivot từ người chơi:
+        // chọn pivot theo logic merge tự động.
+        if (upgradedTile == null) {
+            upgradedTile = chooseAutomaticPivot(group);
+        }
+
+        // Lưu thông tin group trước khi thay đổi Board.
+        lastMergeGroups.add(
+            MergeGroupSnapshot.capture(
+                group,
+                upgradedTile
+            )
+        );
+
+        // Nâng cấp pivot.
+        upgradeTile(mode, upgradedTile);
+        int survivorTotal = upgradedTile.getSurvivors(), mineLevel = upgradedTile.getMineLevel();
+        boolean hasRaft = upgradedTile.hasRaft(), hasShelter = upgradedTile.hasShelter();
+        if(group.size() > 3) {
+            if(mode.equals("To Shelter")) {
+                hasRaft = upgradedTile.getType() < 5;
+                hasShelter = upgradedTile.getType() > 4;
+            }
+            else if(mode.equals("Against Pirate"))
+                if(mineLevel < 3) mineLevel++;
+        }
+
+        if(mode.equals("To Shelter") && upgradedTile.getType() == 8) hasShelter = true;
+
+        // Các tile còn lại chuyển thành PENDING.
+        for (Tile tile : group) {
+            if (tile != upgradedTile) {
+                survivorTotal += tile.getSurvivors();
+                if(tile.getMineLevel() + mineLevel <= 3) mineLevel += tile.getMineLevel();
+                else mineLevel = 3;
+                if(tile.hasRaft()) if(tile.getType() < 4 && !hasRaft) hasRaft = true;
+                if(tile.hasShelter()) if(!hasShelter) hasShelter = true;
+                tile.clearExtras();
+                tile.setType(25);
             }
         }
-        else {
-            if(group.getFirst().getType() == 9) group.forEach(t -> t.setType(10));
-            else {
 
-                boolean isHorizontalGroup = true;
-                int row = group.getFirst().getRow();
-                for (i = 1; i < size; i++)
-                    if (group.get(i).getRow() != row) {
-                        isHorizontalGroup = false;
-                        break;
-                    }
+        Tile clone = new Tile(survivorTotal, hasRaft, hasShelter, mineLevel);
+        upgradedTile.copyExtrasFrom(clone);
+    }
 
-                if (isHorizontalGroup) {
-                    if (size != 4) {
-                        group.get(size / 2).levelUp();
-                        group.forEach(t -> { if(t != group.get(size/2)) t.setType(10); });
-                    } else {
+    private Tile chooseAutomaticPivot(List<Tile> group) {
 
-                        group.get(1).levelUp();
-                        group.get(0).setType(10);
-                        group.get(2).setType(10);
-                        group.get(3).setType(10);
-                    }
-                } else {
+        int size = group.size();
 
-                    boolean isVerticalGroup = true;
-                    int col = group.getFirst().getCol();
-                    for (i = 1; i < size; i++)
-                        if (group.get(i).getCol() != col) {
-                            isVerticalGroup = false;
-                            break;
-                        }
+        // Nhóm nằm ngang hoặc nằm dọc
+        boolean horizontal = true;
+        int row = group.getFirst().getRow();
 
-                    if (isVerticalGroup) {
-                        group.getLast().levelUp();
-                        group.forEach(t -> { if(t != group.getLast()) t.setType(10); });
-                    } else {
+        for (Tile tile : group) {
+            if (tile.getRow() != row) {
+                horizontal = false;
+                break;
+            }
+        }
 
-                        Tile secondTile = group.get(1);
-                        int intersectionRow = 0, intersectionCol = 0;
-//                        boolean outerLoopBreak;
+        boolean vertical = true;
+        int col = group.getFirst().getCol();
 
-                        if(row == secondTile.getRow()) {
-                            for(i = 3; i < size; i++) {
-                                if(group.get(i).getRow() != row) {
-                                    intersectionCol = group.get(i).getCol();
-                                    break;
-                                }
-                            }
-                            for(Tile t : group) {
-                                if(t.getCol() == intersectionCol) {
-                                    t.levelUp();
-                                    group.forEach(tile -> { if(tile != t) tile.setType(10);} );
-                                    break;
-                                }
-                            }
-                        } else {
+        for (Tile tile : group) {
+            if (tile.getCol() != col) {
+                vertical = false;
+                break;
+            }
+        }
 
-                            for(i = 3; i < size; i++) {
-                                if(group.get(i).getCol() != col) {
-                                    intersectionRow = group.get(i).getRow();
-                                    break;
-                                }
-                            }
-                            for(Tile t : group) {
-                                if(t.getRow() == intersectionRow) {
-                                    t.levelUp();
-                                    group.forEach(tile -> { if(tile != t) tile.setType(10); });
-                                    break;
-                                }
-                            }
-                        }
-                    }
+        if (horizontal || vertical) {
+            return group.get(size / 2);
+        }
+
+        // Nhóm hình L, T hoặc có giao nhau:
+        // tìm tile có ít nhất một tile cùng hàng
+        // và một tile khác cùng cột.
+        for (Tile candidate : group) {
+
+            boolean sameRow = false;
+            boolean sameCol = false;
+
+            for (Tile other : group) {
+
+                if (other == candidate) {
+                    continue;
+                }
+
+                if (other.getRow() == candidate.getRow()) {
+                    sameRow = true;
+                }
+
+                if (other.getCol() == candidate.getCol()) {
+                    sameCol = true;
                 }
             }
+
+            if (sameRow && sameCol) {
+                return candidate;
+            }
         }
+
+        throw new IllegalStateException(
+            "Cannot determine automatic pivot."
+        );
+    }
+
+    private void upgradeTile(String mode, Tile tile) {
+        if (tile.getType() == 4) {
+            tile.setType(
+                mode.equals("Rescue Boat")
+                    || mode.equals("Precious Items")
+                    ? 9 : 5
+            );
+        }
+        else if(tile.getType() == 7) {
+            tile.setType(mode.equals("To Shelter") ? 8 : 10);
+        }
+        else if (tile.getType() != 9) {
+            tile.levelUp();
+        }
+        else tile.setType(25);
     }
 }

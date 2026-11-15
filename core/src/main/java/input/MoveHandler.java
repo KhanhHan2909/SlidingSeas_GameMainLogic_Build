@@ -5,6 +5,7 @@ import board.Tile;
 
 import gameplay.MergeSystem;
 import managers.AnimationManager;
+import screens.GameScreen;
 
 public class MoveHandler {
 
@@ -23,6 +24,15 @@ public class MoveHandler {
     private Tile selectedTile;
     private Tile adjacentTile;
 
+//    private boolean cascadeReady = false;
+    private boolean inputLocked = false;
+    private boolean mergeReady = false;
+    private boolean mergeConvergenceFinished = false;
+
+    public void setInputLocked(boolean locked) {
+        this.inputLocked = locked;
+    }
+
     public MoveHandler(
 //        BoardManager boardManager,
         AnimationManager animationManager
@@ -38,9 +48,8 @@ public class MoveHandler {
         Tile selectedTile,
         SwipeDirection direction
     ) {
-
         // Không nhận input khi đang animation.
-        if (state != MoveState.IDLE) return;
+        if (state != MoveState.IDLE || inputLocked) return;
 
         if (selectedTile == null || direction == null) return;
 
@@ -71,8 +80,11 @@ public class MoveHandler {
     }
 
     // Cập nhật trạng thái mỗi frame.
-    public void update(BoardManager boardManager, MergeSystem mergeSystem, float delta) {
-
+    public void update(
+        BoardManager boardManager,
+        MergeSystem mergeSystem,
+        float delta
+    ) {
         animationManager.update(delta);
 
         if (!animationManager.isAnimationFinished()) {
@@ -86,23 +98,24 @@ public class MoveHandler {
 
             case SWAPPING:
 
-                // Chỉ kiểm tra merge sau khi swap animation kết thúc.
                 boolean mergeAvailable =
                     boardManager.processMerges(mergeSystem);
 
                 if (mergeAvailable) {
 
-                    // Giữ nguyên vị trí mới.
-                    animationManager.playMergeAnimation(
-                        boardManager.getBoard()
-                    );
+                    // MergeSystem đã xử lý một lượt
+                    // và lưu lại các MatchGroup.
 
+                    mergeReady = true;
+
+                    // Chờ GameScreen chạy
+                    // MergeConvergeAnimation.
                     state = MoveState.MERGING;
 
                 } else {
 
-                    // Bắt đầu animation quay trở lại.
-                    animationManager.startReverseSwapAnimation();
+                    animationManager
+                        .startReverseSwapAnimation();
 
                     state = MoveState.REVERSING;
                 }
@@ -111,30 +124,57 @@ public class MoveHandler {
 
             case REVERSING:
 
-                // Hình ảnh đã trở về vị trí ban đầu.
-                // Bây giờ hoàn tác swap logic.
                 boardManager.getBoard().swapTiles(
                     selectedTile,
                     adjacentTile
                 );
 
                 resetMove();
-
                 break;
 
             case MERGING:
+                // Chờ GameScreen hoàn thành
+                // MergeConvergeAnimation.
+                if (!mergeConvergenceFinished) {
+                    break;
+                }
 
-                // Merge animation đã hoàn tất.
+                // Hiệu ứng hội tụ đã kết thúc.
+                // GameScreen đã bắt đầu cascade.
                 resetMove();
 
                 break;
         }
     }
 
+    public boolean consumeMergeReady() {
+
+        if (!mergeReady) {
+            return false;
+        }
+
+        mergeReady = false;
+        return true;
+    }
+
+    public void completeMergeConvergence() {
+
+        if (state != MoveState.MERGING) {
+            throw new IllegalStateException(
+                "No merge convergence is in progress."
+            );
+        }
+
+        mergeConvergenceFinished = true;
+    }
+
     private void resetMove() {
 
         selectedTile = null;
         adjacentTile = null;
+
+        mergeReady = false;
+        mergeConvergenceFinished = false;
 
         state = MoveState.IDLE;
     }
